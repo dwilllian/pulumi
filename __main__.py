@@ -1,6 +1,7 @@
 import pulumi
-import pulumi_awsx as awsx
-import pulumi_eks as eks
+from pulumi_aws import lb, s3
+from pulumi_awsx import ec2
+from pulumi_eks import Cluster
 import pulumi_aws as aws
 
 # Get some values from the Pulumi configuration (or use defaults)
@@ -12,29 +13,29 @@ eks_node_instance_type = config.get("eksNodeInstanceType", "t3.medium")
 vpc_network_cidr = config.get("vpcNetworkCidr", "10.0.0.0/16")
 
 # Create a VPC for the EKS cluster
-eks_vpc = awsx.ec2.Vpc("vpc-facepass",
-    enable_dns_hostnames=True,
-    cidr_block=vpc_network_cidr)
+eks_vpc = ec2.Vpc("vpc-facepass", cidr_block=vpc_network_cidr)
 
 # Create the EKS cluster
-eks_cluster = eks.Cluster("eks-facepass",
-    vpc_id=eks_vpc.vpc_id,
-    public_subnet_ids=eks_vpc.public_subnet_ids,
-    private_subnet_ids=eks_vpc.private_subnet_ids,
-    instance_type=eks_node_instance_type,
+eks_cluster = Cluster(
+    "eks-facepass",
+    version="1.20",  # Match your kubernetes version here
+    vpc_id=eks_vpc.id,
     desired_capacity=desired_cluster_size,
     min_size=min_cluster_size,
     max_size=max_cluster_size,
+    instance_type=eks_node_instance_type,
     node_associate_public_ip_address=False
-    )
+)
 
-bucket = aws.s3.Bucket('alb-log-bucket')
+# Create an S3 Bucket
+bucket = s3.Bucket('alb-log-bucket')
+
+alb_subnets = eks_vpc.public_subnet_ids.apply(lambda subnet_ids: [subnet.id for subnet in subnet_ids])
 
 # Create an Application Load Balancer (ALB)
-alb = aws.lb.LoadBalancer("alb-facepass",
-    security_groups=[eks_vpc.vpc.default_security_group_id],   # Assign the VPC security group
-    subnets=eks_vpc.public_subnet_ids,  # Use the VPC public subnet IDs
-    enable_http2=True,
+alb = lb.LoadBalancer(
+    "alb-facepass",
+    subnets=alb_subnets,
     access_logs=aws.lb.LoadBalancerAccessLogsArgs(
         bucket=bucket.id,
         enabled=True,
@@ -42,32 +43,24 @@ alb = aws.lb.LoadBalancer("alb-facepass",
     )
 )
 
-# Replace awsx.lb.TargetGroup with aws.lb.TargetGroup
-tgt_group_args = aws.lb.TargetGroupArgs(
+# Create Target Group
+tgt_group = lb.TargetGroup(
+    'tgt-group',
     port=80,
     protocol='HTTP',
-    health_check=aws.lb.TargetGroupHealthCheckArgs(
-        enabled=True,
-        path='/',
-        protocol='HTTP'
-    ),
     vpc_id=eks_vpc.id
 )
 
-# Replace awsx.lb.TargetGroup with aws.lb.TargetGroup
-tgt_group = aws.lb.TargetGroup('tgt-group', args=tgt_group_args)
-
-listener_args = aws.lb.ListenerArgs(
+# Create Listener
+listener = lb.Listener(
+    'listener',
+    load_balancer_arn=alb.arn,
     port=80,
-    protocol='HTTP',
-    default_actions=[aws.lb.ListenerDefaultActionArgs(  # wrap in a list to fix the error
+    default_actions=[lb.ListenerDefaultActionArgs(
         type='forward',
         target_group_arn=tgt_group.arn
-    )],
-    load_balancer_arn=alb.arn
+    )]
 )
-
-listener = aws.lb.Listener('listener', args=listener_args)
 
 pulumi.export("kubeconfig", eks_cluster.kubeconfig)
 pulumi.export("vpcId", eks_vpc.id)
