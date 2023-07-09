@@ -1,8 +1,10 @@
 import pulumi
-from pulumi_aws import lb, s3
+from pulumi_aws import lb, s3, ec2
 from pulumi_awsx import ec2
 from pulumi_eks import Cluster
+from pulumi_awsx import ec2 as ec2x
 import pulumi_aws as aws
+
 
 # Get some values from the Pulumi configuration (or use defaults)
 config = pulumi.Config()
@@ -43,13 +45,23 @@ alb = lb.LoadBalancer(
     )
 )
 
-# Create Target Group
+# Create Target Group with vpc_id
 tgt_group = lb.TargetGroup(
     'tgt-group',
     port=80,
     protocol='HTTP',
-    vpc_id=eks_vpc.id
+    target_type="instance",
+    vpc_id=eks_vpc.id, # Added vpc_id here
 )
+
+# Create TargetGroupAttachment resources for the instances
+instance_ids = ["instance_id"]  # Replace with your Instance IDs
+for instance_id in instance_ids:
+    attachment = lb.TargetGroupAttachment(f"tg-attachment-{instance_id}",
+        target_group_arn=tgt_group.arn,
+        target_id=instance_id,
+        port=80,
+    )
 
 # Create Listener
 listener = lb.Listener(
@@ -62,7 +74,9 @@ listener = lb.Listener(
     )]
 )
 
+# Output the details of the infrastructure
 pulumi.export("kubeconfig", eks_cluster.kubeconfig)
 pulumi.export("vpcId", eks_vpc.id)
 pulumi.export("albUrl", alb.dns_name)
 pulumi.export("bucketName", bucket.id)
+pulumi.export("targetGroupId", lb.TargetGroup.id)
