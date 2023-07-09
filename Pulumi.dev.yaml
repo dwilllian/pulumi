@@ -1,0 +1,8 @@
+config:
+  aws:profile: 'default'
+  aws:region: us-east-1
+  my-k8s-cluster:desiredClusterSize: "2"
+  my-k8s-cluster:eksNodeInstanceType: t3.medium
+  my-k8s-cluster:maxClusterSize: "2"
+  my-k8s-cluster:minClusterSize: "2"
+  my-k8s-cluster:vpcNetworkCidr: 10.0.0.0/16
